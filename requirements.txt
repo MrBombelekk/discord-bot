@@ -1,2 +1,4 @@
 discord.py
-wavelink
+yt-dlp
+ffmpeg-python
+PyNaCl
