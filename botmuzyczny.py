@@ -135,6 +135,5 @@ async def leave(ctx):
         loop = False
         await ctx.send("👋 Wyszedłem z kanału")
 
-
-# 🔐 TU WKLEJ TOKEN
-bot.run("nWFdIYi1VslduVvrPiAlBJjcLL4Sdfb_")
+import os
+bot.run(os.getenv("TOKEN"))
