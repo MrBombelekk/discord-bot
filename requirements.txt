@@ -1,3 +1,2 @@
-discord.py[voice]
-yt-dlp
-PyNaCl
+discord.py
+wavelink
