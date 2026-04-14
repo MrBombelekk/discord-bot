@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 import wavelink
+import asyncio
 import os
 
 intents = discord.Intents.default()
@@ -10,83 +11,96 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 queue = []
 loop_mode = False
-current = None
 
 
+# ================== READY ==================
 @bot.event
 async def on_ready():
     print(f"Zalogowano jako {bot.user}")
 
-    # 🔥 połączenie z Lavalink
-    node = wavelink.Node(
-        uri="lavalink-v4-idle.up.railway.app:443",  # darmowy node
-        password="youshallnotpass",
-        secure=True
-    )
+    nodes = [
+        wavelink.Node(
+            uri="http://lava.link:80",
+            password="youshallnotpass"
+        )
+    ]
 
-    await wavelink.Pool.connect(nodes=[node], client=bot)
+    await wavelink.Pool.connect(nodes=nodes, client=bot)
 
 
-# ▶️ PLAY
+# ================== PLAY NEXT ==================
+async def play_next(ctx):
+    global loop_mode
+
+    vc: wavelink.Player = ctx.voice_client
+
+    if loop_mode and vc.current:
+        await vc.play(vc.current)
+        return
+
+    if queue:
+        track = queue.pop(0)
+        await vc.play(track)
+        await ctx.send(f"▶️ Teraz gra: **{track.title}**")
+    else:
+        await ctx.send("⏹️ Kolejka pusta")
+
+
+# ================== PLAY ==================
 @bot.command()
-async def p(ctx, *, query: str):
-    global current
+async def p(ctx, *, query):
+    global queue
 
     if not ctx.author.voice:
-        return await ctx.send("❌ Wejdź na kanał głosowy")
+        await ctx.send("❌ Musisz być na kanale głosowym")
+        return
 
-    player: wavelink.Player
+    channel = ctx.author.voice.channel
 
     if not ctx.voice_client:
-        player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+        vc = await channel.connect(cls=wavelink.Player)
     else:
-        player = ctx.voice_client
+        vc: wavelink.Player = ctx.voice_client
 
-    tracks = await wavelink.YouTubeTrack.search(query)
+    await ctx.send("🔎 Szukam...")
+
+    tracks = await wavelink.Playable.search(query)
 
     if not tracks:
-        return await ctx.send("❌ Nic nie znaleziono")
+        await ctx.send("❌ Nie znaleziono")
+        return
 
     track = tracks[0]
 
-    queue.append(track)
+    if not vc.playing:
+        await vc.play(track)
+        await ctx.send(f"▶️ Teraz gra: **{track.title}**")
+    else:
+        queue.append(track)
+        await ctx.send(f"➕ Dodano do kolejki: **{track.title}**")
 
-    if not player.playing:
+
+# ================== EVENT KONIEC PIOSENKI ==================
+@bot.event
+async def on_wavelink_track_end(payload):
+    player = payload.player
+    ctx = player.ctx
+
+    if ctx:
         await play_next(ctx)
 
-    await ctx.send(f"➕ Dodano: **{track.title}**")
 
-
-# ▶️ NEXT
-async def play_next(ctx):
-    global current, loop_mode
-
-    player: wavelink.Player = ctx.voice_client
-
-    if loop_mode and current:
-        track = current
-    else:
-        if not queue:
-            return await ctx.send("⏹️ Kolejka pusta")
-        track = queue.pop(0)
-        current = track
-
-    await player.play(track)
-    await ctx.send(f"▶️ Teraz gra: **{track.title}**")
-
-
-# ⏭️ SKIP
+# ================== SKIP ==================
 @bot.command()
 async def skip(ctx):
-    global loop_mode
-    loop_mode = False
+    vc: wavelink.Player = ctx.voice_client
 
-    if ctx.voice_client:
-        await ctx.voice_client.stop()
-        await play_next(ctx)
+    if vc and vc.playing:
+        await vc.stop()
+        await ctx.send("⏭️ Pominięto")
 
 
-# 🔁 LOOP
+# ================== LOOP ==================
 @bot.command()
 async def loop(ctx):
     global loop_mode
@@ -94,27 +108,25 @@ async def loop(ctx):
     await ctx.send(f"🔁 Loop: {'ON' if loop_mode else 'OFF'}")
 
 
-# 📜 QUEUE
-@bot.command()
-async def q(ctx):
-    if not queue:
-        return await ctx.send("📭 Kolejka pusta")
-
-    msg = "\n".join([f"{i+1}. {t.title}" for i, t in enumerate(queue[:10])])
-    await ctx.send(f"📜 Kolejka:\n{msg}")
-
-
-# 🚪 LEAVE
+# ================== LEAVE ==================
 @bot.command()
 async def leave(ctx):
-    global queue, loop_mode, current
+    global queue, loop_mode
 
-    if ctx.voice_client:
-        await ctx.voice_client.disconnect()
+    vc: wavelink.Player = ctx.voice_client
+
+    if vc:
+        await vc.disconnect()
         queue.clear()
         loop_mode = False
-        current = None
         await ctx.send("👋 Wyszedłem")
 
 
+# ================== FIX CTX ==================
+@bot.event
+async def on_wavelink_track_start(payload):
+    payload.player.ctx = payload.player.client.get_channel(payload.player.channel.id).last_message.channel
+
+
+# ================== RUN ==================
 bot.run(os.getenv("TOKEN"))
