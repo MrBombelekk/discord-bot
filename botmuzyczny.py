@@ -1,149 +1,162 @@
-import discord
-from discord.ext import commands
-import yt_dlp
 import asyncio
 import os
+from collections import deque
+
+import discord
+import yt_dlp
+from discord.ext import commands
 
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-queue = []
-loop = False
-current = None
+queue = deque()
+loop_enabled = False
+current_track = None
 
-# 🔥 YTDLP FIX (NAJWAŻNIEJSZE)
-ydl_opts = {
-    'format': 'bestaudio/best',
-    'noplaylist': True,
-    'quiet': True,
-    'default_search': 'ytsearch',
-    'ignoreerrors': True,
-    'nocheckcertificate': True,
-
-    'http_headers': {
-        'User-Agent': 'Mozilla/5.0'
-    },
-
-    'extractor_args': {
-        'youtube': {
-            'player_client': ['android']
-        }
-    }
+YDL_OPTIONS = {
+    "format": "bestaudio/best",
+    "quiet": True,
+    "noplaylist": True,
+    "default_search": "ytsearch1",
+    "skip_download": True,
+    "ignoreerrors": True,
+    "extract_flat": False,
 }
 
-ffmpeg_options = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn'
+FFMPEG_OPTIONS = {
+    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+    "options": "-vn",
 }
+
 
 @bot.event
 async def on_ready():
     print(f"Zalogowano jako {bot.user}")
 
-# 🔎 pobieranie audio (NAPRAWIONE)
-def get_audio(query):
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(f"ytsearch1:{query}", download=False)
 
-        if not info or 'entries' not in info:
-            raise Exception("Brak wyników")
+def _extract_audio(query):
+    with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+        info = ydl.extract_info(query, download=False)
 
-        video = info['entries'][0]
+    if not info:
+        raise ValueError("Brak wyników")
 
-        if not video:
-            raise Exception("Brak video")
+    if "entries" in info:
+        info = next((entry for entry in info["entries"] if entry), None)
 
-        formats = video.get("formats", [])
+    if not info:
+        raise ValueError("Brak wyników")
 
-        audio_url = None
+    url = info.get("url")
+    title = info.get("title", "Nieznany tytuł")
 
-        for f in formats:
-            if f.get("acodec") != "none":
-                audio_url = f.get("url")
-                break
+    if not url:
+        raise ValueError("Nie udało się pobrać adresu audio")
 
-        if not audio_url:
-            raise Exception("Brak audio")
+    return url, title
 
-        title = video.get("title", "Nieznany")
 
-        return audio_url, title
+async def get_audio(query):
+    return await asyncio.to_thread(_extract_audio, query)
 
-# ▶️ następna piosenka
+
+def schedule_next(ctx, error=None):
+    if error:
+        print(f"Błąd odtwarzania: {error}")
+
+    asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop)
+
+
 async def play_next(ctx):
-    global current, loop
+    global current_track
 
-    if loop and current:
-        queue.insert(0, current)
+    voice_client = ctx.voice_client
+    if not voice_client or not voice_client.is_connected():
+        current_track = None
+        return
 
-    if len(queue) > 0:
-        url, title = queue.pop(0)
-        current = (url, title)
+    if loop_enabled and current_track:
+        queue.appendleft(current_track)
 
-        source = await discord.FFmpegOpusAudio.from_probe(url, **ffmpeg_options)
-
-        ctx.voice_client.play(
-            source,
-            after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop)
-        )
-
-        await ctx.send(f"▶️ Teraz gra: **{title}**")
-    else:
+    if not queue:
+        current_track = None
         await ctx.send("⏹️ Kolejka pusta")
+        return
 
-# ▶️ play
+    url, title = queue.popleft()
+    current_track = (url, title)
+    source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
+
+    voice_client.play(source, after=lambda error: schedule_next(ctx, error))
+    await ctx.send(f"▶️ Teraz gra: **{title}**")
+
+
 @bot.command()
 async def p(ctx, *, query):
     if not ctx.author.voice:
-        await ctx.send("❌ Musisz być na kanale głosowym")
+        await ctx.send("❌ Wejdź na kanał głosowy")
         return
 
     channel = ctx.author.voice.channel
 
     if not ctx.voice_client:
         await channel.connect()
+    elif ctx.voice_client.channel != channel:
+        await ctx.voice_client.move_to(channel)
 
     await ctx.send("🔎 Szukam...")
 
     try:
-        url, title = get_audio(query)
-    except Exception as e:
-        await ctx.send(f"❌ Błąd: {e}")
+        url, title = await get_audio(query)
+    except Exception as exc:
+        await ctx.send(f"❌ Błąd: {exc}")
         return
 
     queue.append((url, title))
 
-    if not ctx.voice_client.is_playing():
+    if not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused():
         await play_next(ctx)
     else:
         await ctx.send(f"➕ Dodano: **{title}**")
 
-# ⏭️ skip
+
 @bot.command()
 async def skip(ctx):
-    if ctx.voice_client:
-        ctx.voice_client.stop()
-        await ctx.send("⏭️ Pominięto")
+    if not ctx.voice_client or not ctx.voice_client.is_playing():
+        await ctx.send("❌ Nic teraz nie gra")
+        return
 
-# 🔁 loop
-@bot.command()
-async def loop(ctx):
-    global loop
-    loop = not loop
-    await ctx.send(f"🔁 Loop: {'ON' if loop else 'OFF'}")
+    ctx.voice_client.stop()
+    await ctx.send("⏭️ Pominięto")
 
-# 🚪 leave
+
+@bot.command(name="loop")
+async def loop_command(ctx):
+    global loop_enabled
+
+    loop_enabled = not loop_enabled
+    await ctx.send(f"🔁 Loop: {'ON' if loop_enabled else 'OFF'}")
+
+
 @bot.command()
 async def leave(ctx):
-    global queue, loop, current
+    global loop_enabled, current_track
 
-    if ctx.voice_client:
-        await ctx.voice_client.disconnect()
-        queue.clear()
-        current = None
-        loop = False
-        await ctx.send("👋 Wyszedłem")
+    if not ctx.voice_client:
+        await ctx.send("❌ Nie jestem na kanale głosowym")
+        return
 
-bot.run(os.getenv("TOKEN"))
+    await ctx.voice_client.disconnect()
+    queue.clear()
+    current_track = None
+    loop_enabled = False
+    await ctx.send("👋 Wyszedłem")
+
+
+token = os.getenv("TOKEN")
+if not token:
+    raise RuntimeError("Brak zmiennej środowiskowej TOKEN")
+
+bot.run(token)
