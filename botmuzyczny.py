@@ -70,7 +70,7 @@ def setup_youtube_cookies():
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, case_insensitive=True)
 
 queue = deque()
 loop_enabled = False
