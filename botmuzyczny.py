@@ -103,7 +103,13 @@ def clean_query(query):
     return query
 
 
-def get_ydl_options(format_selector="bestaudio[acodec!=none]/best[acodec!=none]/best"):
+def get_ydl_options(
+    format_selector="bestaudio[acodec!=none]/best[acodec!=none]/best",
+    player_clients=None,
+):
+    if player_clients is None:
+        player_clients = ["android", "ios", "web"]
+
     options = {
         "quiet": True,
         "no_warnings": True,
@@ -124,12 +130,14 @@ def get_ydl_options(format_selector="bestaudio[acodec!=none]/best[acodec!=none]/
                 "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
             )
         },
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android", "web"],
-            }
-        },
     }
+
+    if player_clients:
+        options["extractor_args"] = {
+            "youtube": {
+                "player_client": player_clients,
+            }
+        }
 
     if COOKIE_FILE:
         options["cookiefile"] = COOKIE_FILE
@@ -188,16 +196,28 @@ def get_candidates(query):
 
 
 def extract_candidate(candidate):
-    try:
-        with yt_dlp.YoutubeDL(get_ydl_options()) as ydl:
-            return ydl.extract_info(candidate, download=False)
-    except yt_dlp.utils.DownloadError as exc:
-        if "Requested format is not available" not in str(exc):
-            raise
+    attempts = [
+        ("audio android/ios/web", get_ydl_options()),
+        ("audio ios/web", get_ydl_options(player_clients=["ios", "web"])),
+        ("audio domyślny klient", get_ydl_options(player_clients=[])),
+        ("best z audio", get_ydl_options("best*[acodec!=none]/best", player_clients=[])),
+        ("dowolny best", get_ydl_options("best", player_clients=[])),
+    ]
+    last_error = None
 
-        logger.info("Wybrany format niedostępny dla %s, próbuję zapasowego formatu best", candidate)
-        with yt_dlp.YoutubeDL(get_ydl_options("best")) as ydl:
-            return ydl.extract_info(candidate, download=False)
+    for label, options in attempts:
+        try:
+            logger.info("Próbuję formatu %s dla %s", label, candidate)
+            with yt_dlp.YoutubeDL(options) as ydl:
+                return ydl.extract_info(candidate, download=False)
+        except yt_dlp.utils.DownloadError as exc:
+            last_error = exc
+            if "Requested format is not available" not in str(exc):
+                raise
+
+            logger.info("Format %s niedostępny dla %s", label, candidate)
+
+    raise last_error
 
 
 def _extract_audio(query):
@@ -230,7 +250,10 @@ def _extract_audio(query):
             continue
     else:
         if is_url(query) and last_error:
-            raise ValueError("Ten film nie ma dostępnego formatu audio dla bota") from last_error
+            raise ValueError(
+                "YouTube nie oddał botowi działającego streamu dla tego linku. "
+                "Spróbuj po nazwie piosenki albo odśwież cookies."
+            ) from last_error
 
         raise ValueError("Nie znalazłem działającego wyniku audio na YouTube") from last_error
 
