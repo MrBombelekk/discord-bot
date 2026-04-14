@@ -75,6 +75,15 @@ queue = deque()
 loop_enabled = False
 current_track = None
 skip_requested = False
+MAX_TITLE_LENGTH = 45
+
+
+def short_title(title):
+    title = " ".join(title.split())
+    if len(title) <= MAX_TITLE_LENGTH:
+        return title
+
+    return title[: MAX_TITLE_LENGTH - 3].rstrip() + "..."
 
 def get_ydl_options():
     options = {
@@ -202,7 +211,7 @@ async def play_next(ctx):
         await play_next(ctx)
         return
 
-    await ctx.send(f"▶️ Teraz gra: **{title}**")
+    await ctx.send(f"▶️ **{short_title(title)}**")
 
 
 @bot.command()
@@ -225,7 +234,7 @@ async def p(ctx, *, query):
         await ctx.send("❌ Discord za długo nie odpowiadał przy łączeniu z kanałem")
         return
 
-    message = await ctx.send("🔎 Szukam...")
+    message = await ctx.send("🔎")
 
     try:
         url, title = await get_audio(query)
@@ -237,10 +246,10 @@ async def p(ctx, *, query):
     queue.append((url, title))
 
     if not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused():
-        await message.edit(content=f"✅ Znaleziono: **{title}**")
+        await message.edit(content="✅")
         await play_next(ctx)
     else:
-        await message.edit(content=f"➕ Dodano: **{title}**")
+        await message.edit(content=f"➕ **{short_title(title)}**")
 
 
 @bot.command()
@@ -276,11 +285,14 @@ async def queue_command(ctx):
 
     lines = []
     if current_track:
-        lines.append(f"Teraz: **{current_track[1]}**")
+        lines.append(f"▶️ **{short_title(current_track[1])}**")
 
     if queue:
         upcoming = list(queue)[:10]
-        lines.extend(f"{index}. {title}" for index, (_, title) in enumerate(upcoming, start=1))
+        lines.extend(
+            f"{index}. {short_title(title)}"
+            for index, (_, title) in enumerate(upcoming, start=1)
+        )
 
         if len(queue) > 10:
             lines.append(f"...i jeszcze {len(queue) - 10}")
