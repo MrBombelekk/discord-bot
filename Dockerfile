@@ -1,10 +1,10 @@
 FROM python:3.11
 
+RUN apt update && apt install -y ffmpeg
+
 WORKDIR /app
 COPY . .
 
-RUN apt update && apt install -y ffmpeg
-
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
 CMD ["python", "botmuzyczny.py"]
