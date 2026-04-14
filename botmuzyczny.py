@@ -252,7 +252,7 @@ async def p(ctx, *, query):
         await message.edit(content=f"➕ **{short_title(title)}**")
 
 
-@bot.command()
+@bot.command(aliases=["s"])
 async def skip(ctx):
     global skip_requested
 
@@ -269,7 +269,7 @@ async def skip(ctx):
     await ctx.send("⏭️ Pominięto")
 
 
-@bot.command(name="loop")
+@bot.command(name="loop", aliases=["l"])
 async def loop_command(ctx):
     global loop_enabled
 
