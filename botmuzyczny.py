@@ -369,7 +369,7 @@ async def p(ctx, *, query):
     queue.append((url, title))
 
     if not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused():
-        await message.edit(content="✅")
+        await message.delete()
         await play_next(ctx)
     else:
         await message.edit(content=f"➕ **{short_title(title)}**")
