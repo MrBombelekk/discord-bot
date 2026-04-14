@@ -1,12 +1,10 @@
 FROM python:3.11
 
+RUN apt update && apt install -y ffmpeg
+
 WORKDIR /app
-
-# instalacja ffmpeg i libs
-RUN apt update && apt install -y ffmpeg libopus-dev
-
 COPY . .
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
 CMD ["python", "botmuzyczny.py"]
