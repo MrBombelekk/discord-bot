@@ -13,10 +13,14 @@ queue = []
 loop = False
 
 ydl_opts = {
-    'format': 'bestaudio',
+    'format': 'bestaudio/best',
     'noplaylist': True,
     'quiet': True,
     'default_search': 'ytsearch',
+    'source_address': '0.0.0.0',
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0'
+    },
     'extractor_args': {
         'youtube': {
             'player_client': ['web']
