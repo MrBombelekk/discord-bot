@@ -13,18 +13,28 @@ queue = []
 loop_mode = False
 current = None
 
+# 🔥 yt-dlp FIX (omija blokady YouTube)
 ydl_opts = {
     'format': 'bestaudio',
     'noplaylist': True,
     'quiet': True,
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+    },
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['android']
+        }
+    }
 }
 
 ffmpeg_options = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'
 }
+
 
 @bot.event
 async def on_ready():
@@ -76,7 +86,13 @@ async def p(ctx, *, query):
 
     await ctx.send("🔎 Szukam...")
 
-    url, title = get_audio(query)
+    try:
+        url, title = get_audio(query)
+    except Exception as e:
+        await ctx.send("❌ YouTube blokuje — spróbuj inną piosenkę")
+        print(e)
+        return
+
     queue.append((url, title))
 
     if not ctx.voice_client.is_playing():
