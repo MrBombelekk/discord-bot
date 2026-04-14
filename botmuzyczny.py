@@ -6,6 +6,7 @@ import tempfile
 import threading
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import discord
 import yt_dlp
@@ -85,6 +86,23 @@ def short_title(title):
 
     return title[: MAX_TITLE_LENGTH - 3].rstrip() + "..."
 
+
+def clean_query(query):
+    query = query.strip()
+    parsed = urlparse(query)
+
+    if parsed.netloc in {"www.youtube.com", "youtube.com", "m.youtube.com"}:
+        video_id = parse_qs(parsed.query).get("v", [None])[0]
+        if video_id:
+            clean_query_string = urlencode({"v": video_id})
+            return urlunparse(("https", "www.youtube.com", "/watch", "", clean_query_string, ""))
+
+    if parsed.netloc in {"youtu.be", "www.youtu.be"} and parsed.path.strip("/"):
+        return f"https://youtu.be/{parsed.path.strip('/')}"
+
+    return query
+
+
 def get_ydl_options():
     options = {
         "format": "bestaudio/best",
@@ -93,7 +111,7 @@ def get_ydl_options():
         "noplaylist": True,
         "default_search": "ytsearch1",
         "skip_download": True,
-        "ignoreerrors": True,
+        "ignoreerrors": False,
         "extract_flat": False,
         "retries": 3,
         "fragment_retries": 3,
@@ -131,6 +149,8 @@ async def on_ready():
 
 
 def _extract_audio(query):
+    query = clean_query(query)
+
     try:
         with yt_dlp.YoutubeDL(get_ydl_options()) as ydl:
             info = ydl.extract_info(query, download=False)
@@ -144,13 +164,13 @@ def _extract_audio(query):
         raise
 
     if not info:
-        raise ValueError("Brak wyników")
+        raise ValueError("Nie udało się pobrać wyniku z YouTube")
 
     if "entries" in info:
         info = next((entry for entry in info["entries"] if entry), None)
 
     if not info:
-        raise ValueError("Brak wyników")
+        raise ValueError("Nie udało się pobrać wyniku z YouTube")
 
     url = info.get("url")
     title = info.get("title") or "Nieznany tytuł"
