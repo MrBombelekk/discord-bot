@@ -105,7 +105,6 @@ def clean_query(query):
 
 def get_ydl_options(format_selector="bestaudio[acodec!=none]/best[acodec!=none]/best"):
     options = {
-        "format": format_selector,
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
@@ -135,6 +134,9 @@ def get_ydl_options(format_selector="bestaudio[acodec!=none]/best[acodec!=none]/
     if COOKIE_FILE:
         options["cookiefile"] = COOKIE_FILE
 
+    if format_selector:
+        options["format"] = format_selector
+
     return options
 
 FFMPEG_OPTIONS = {
@@ -148,28 +150,89 @@ async def on_ready():
     logger.info("Zalogowano jako %s", bot.user)
 
 
+def is_url(query):
+    parsed = urlparse(query)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def candidate_url(entry):
+    url = entry.get("webpage_url") or entry.get("url")
+    if not url:
+        return None
+
+    if url.startswith("http"):
+        return url
+
+    return f"https://www.youtube.com/watch?v={url}"
+
+
+def get_candidates(query):
+    if is_url(query):
+        return [query]
+
+    options = get_ydl_options(format_selector=None)
+    options.update(
+        {
+            "default_search": "ytsearch5",
+            "extract_flat": "in_playlist",
+            "ignoreerrors": True,
+        }
+    )
+
+    with yt_dlp.YoutubeDL(options) as ydl:
+        info = ydl.extract_info(f"ytsearch5:{query}", download=False)
+
+    entries = info.get("entries", []) if info else []
+    candidates = [candidate_url(entry) for entry in entries if entry]
+    return [url for url in candidates if url]
+
+
+def extract_candidate(candidate):
+    try:
+        with yt_dlp.YoutubeDL(get_ydl_options()) as ydl:
+            return ydl.extract_info(candidate, download=False)
+    except yt_dlp.utils.DownloadError as exc:
+        if "Requested format is not available" not in str(exc):
+            raise
+
+        logger.info("Wybrany format niedostępny dla %s, próbuję zapasowego formatu best", candidate)
+        with yt_dlp.YoutubeDL(get_ydl_options("best")) as ydl:
+            return ydl.extract_info(candidate, download=False)
+
+
 def _extract_audio(query):
     query = clean_query(query)
+    candidates = get_candidates(query)
+    last_error = None
 
-    try:
+    if not candidates:
+        raise ValueError("Nie udało się znaleźć wyników na YouTube")
+
+    for candidate in candidates:
         try:
-            with yt_dlp.YoutubeDL(get_ydl_options()) as ydl:
-                info = ydl.extract_info(query, download=False)
+            info = extract_candidate(candidate)
+            break
         except yt_dlp.utils.DownloadError as exc:
-            if "Requested format is not available" not in str(exc):
-                raise
+            message = str(exc)
+            if "429" in message or "Sign in to confirm" in message or "not a bot" in message:
+                raise ValueError(
+                    "YouTube zablokował IP hostingu. Dodaj cookies do zmiennej "
+                    "YOUTUBE_COOKIES albo użyj innego hostingu/IP."
+                ) from exc
 
-            logger.info("Wybrany format niedostępny, próbuję zapasowego formatu best")
-            with yt_dlp.YoutubeDL(get_ydl_options("best")) as ydl:
-                info = ydl.extract_info(query, download=False)
-    except yt_dlp.utils.DownloadError as exc:
-        message = str(exc)
-        if "429" in message or "Sign in to confirm" in message or "not a bot" in message:
-            raise ValueError(
-                "YouTube zablokował IP hostingu. Dodaj cookies do zmiennej "
-                "YOUTUBE_COOKIES albo użyj innego hostingu/IP."
-            ) from exc
-        raise
+            if "Requested format is not available" in message:
+                logger.info("Pomijam wynik bez działającego formatu: %s", candidate)
+                last_error = exc
+                continue
+
+            last_error = exc
+            logger.info("Pomijam niedziałający wynik %s: %s", candidate, exc)
+            continue
+    else:
+        if is_url(query) and last_error:
+            raise ValueError("Ten film nie ma dostępnego formatu audio dla bota") from last_error
+
+        raise ValueError("Nie znalazłem działającego wyniku audio na YouTube") from last_error
 
     if not info:
         raise ValueError("Nie udało się pobrać wyniku z YouTube")
