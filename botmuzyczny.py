@@ -14,7 +14,7 @@ loop_mode = False
 current = None
 
 ydl_opts = {
-    'format': 'bestaudio/best',
+    'format': 'bestaudio',
     'noplaylist': True,
     'quiet': True,
     'default_search': 'ytsearch',
@@ -25,7 +25,10 @@ ydl_opts = {
     },
 
     'nocheckcertificate': True,
-    'ignoreerrors': True
+    'ignoreerrors': True,
+
+    # 🔥 FIX JS
+    'js_runtime': 'node'
 }
 
 ffmpeg_options = {
