@@ -14,7 +14,7 @@ loop_mode = False
 current = None
 
 ydl_opts = {
-    'format': 'bestaudio',
+    'format': 'bestaudio/best',
     'noplaylist': True,
     'quiet': True,
     'default_search': 'ytsearch',
@@ -27,8 +27,11 @@ ydl_opts = {
     'nocheckcertificate': True,
     'ignoreerrors': True,
 
-    # 🔥 FIX JS
-    'js_runtime': 'node'
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['web']
+        }
+    }
 }
 
 ffmpeg_options = {
@@ -43,8 +46,16 @@ async def on_ready():
 def get_audio(query):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(f"ytsearch1:{query}", download=False)
+
+        if not info or 'entries' not in info or not info['entries']:
+            raise Exception("Brak wyników")
+
         video = info['entries'][0]
-        return video['url'], video['title']
+
+        url = video.get('url') or video.get('webpage_url')
+        title = video.get('title', 'Nieznany')
+
+        return url, title
 
 async def play_next(ctx):
     global queue, loop_mode, current
@@ -58,7 +69,7 @@ async def play_next(ctx):
         await ctx.send("⏹️ Koniec kolejki")
         return
 
-    source = await discord.FFmpegOpusAudio.from_probe(url, **ffmpeg_options)
+    source = discord.FFmpegPCMAudio(url, **ffmpeg_options)
 
     ctx.voice_client.play(
         source,
@@ -80,7 +91,7 @@ async def p(ctx, *, query):
 
     try:
         url, title = get_audio(query)
-    except:
+    except Exception as e:
         await ctx.send("❌ Błąd YouTube (spróbuj inną piosenkę)")
         return
 
