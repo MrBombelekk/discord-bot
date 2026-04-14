@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands
-import yt_dlp
-import asyncio
+import wavelink
 import os
 
 intents = discord.Intents.default()
@@ -11,108 +10,101 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 queue = []
 loop_mode = False
-current = None  # 🔥 aktualna piosenka
+current = None
 
-ydl_opts = {
-    'format': 'bestaudio/best',
-    'noplaylist': True,
-    'quiet': True,
-    'default_search': 'ytsearch',
-    'source_address': '0.0.0.0',
-    'http_headers': {
-        'User-Agent': 'Mozilla/5.0'
-    },
-    'extractor_args': {
-        'youtube': {
-            'player_client': ['web']
-        }
-    }
-}
-
-ffmpeg_options = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn'
-}
 
 @bot.event
 async def on_ready():
     print(f"Zalogowano jako {bot.user}")
 
-# 🔎 YouTube
-def search_youtube(query):
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(query, download=False)
-        if 'entries' in info:
-            return info['entries'][0]['url'], info['entries'][0]['title']
-        else:
-            return info['url'], info['title']
+    # 🔥 połączenie z Lavalink
+    node = wavelink.Node(
+        uri="lavalink-v4-idle.up.railway.app:443",  # darmowy node
+        password="youshallnotpass",
+        secure=True
+    )
 
-# ▶️ następna piosenka
-async def play_next(ctx):
-    global loop_mode, current
+    await wavelink.Pool.connect(nodes=[node], client=bot)
 
-    if loop_mode and current:
-        url, title = current
-    else:
-        if len(queue) == 0:
-            await ctx.send("⏹️ Kolejka pusta")
-            return
-        current = queue.pop(0)
-        url, title = current
 
-    source = await discord.FFmpegOpusAudio.from_probe(url, **ffmpeg_options)
-
-    def after_playing(error):
-        fut = asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop)
-        try:
-            fut.result()
-        except:
-            pass
-
-    ctx.voice_client.play(source, after=after_playing)
-
-    await ctx.send(f"▶️ Teraz gra: **{title}**")
-
-# ▶️ play
+# ▶️ PLAY
 @bot.command()
-async def p(ctx, *, query):
-    if not ctx.author.voice:
-        await ctx.send("❌ Musisz być na kanale głosowym")
-        return
+async def p(ctx, *, query: str):
+    global current
 
-    channel = ctx.author.voice.channel
+    if not ctx.author.voice:
+        return await ctx.send("❌ Wejdź na kanał głosowy")
+
+    player: wavelink.Player
 
     if not ctx.voice_client:
-        await channel.connect()
-
-    await ctx.send("🔎 Szukam...")
-
-    url, title = search_youtube(query)
-    queue.append((url, title))
-
-    if not ctx.voice_client.is_playing():
-        await play_next(ctx)
+        player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
     else:
-        await ctx.send(f"➕ Dodano: **{title}**")
+        player = ctx.voice_client
 
-# ⏭️ skip
+    tracks = await wavelink.YouTubeTrack.search(query)
+
+    if not tracks:
+        return await ctx.send("❌ Nic nie znaleziono")
+
+    track = tracks[0]
+
+    queue.append(track)
+
+    if not player.playing:
+        await play_next(ctx)
+
+    await ctx.send(f"➕ Dodano: **{track.title}**")
+
+
+# ▶️ NEXT
+async def play_next(ctx):
+    global current, loop_mode
+
+    player: wavelink.Player = ctx.voice_client
+
+    if loop_mode and current:
+        track = current
+    else:
+        if not queue:
+            return await ctx.send("⏹️ Kolejka pusta")
+        track = queue.pop(0)
+        current = track
+
+    await player.play(track)
+    await ctx.send(f"▶️ Teraz gra: **{track.title}**")
+
+
+# ⏭️ SKIP
 @bot.command()
 async def skip(ctx):
     global loop_mode
-    loop_mode = False  # 🔥 wyłącz loop przy skipie
+    loop_mode = False
 
     if ctx.voice_client:
-        ctx.voice_client.stop()
-        await ctx.send("⏭️ Pominięto")
+        await ctx.voice_client.stop()
+        await play_next(ctx)
 
-# 🔁 loop
+
+# 🔁 LOOP
 @bot.command()
 async def loop(ctx):
     global loop_mode
     loop_mode = not loop_mode
     await ctx.send(f"🔁 Loop: {'ON' if loop_mode else 'OFF'}")
 
-# 🚪 leave
+
+# 📜 QUEUE
+@bot.command()
+async def q(ctx):
+    if not queue:
+        return await ctx.send("📭 Kolejka pusta")
+
+    msg = "\n".join([f"{i+1}. {t.title}" for i, t in enumerate(queue[:10])])
+    await ctx.send(f"📜 Kolejka:\n{msg}")
+
+
+# 🚪 LEAVE
 @bot.command()
 async def leave(ctx):
     global queue, loop_mode, current
@@ -124,5 +116,5 @@ async def leave(ctx):
         current = None
         await ctx.send("👋 Wyszedłem")
 
-# 🚀 START
+
 bot.run(os.getenv("TOKEN"))
