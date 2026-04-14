@@ -10,7 +10,8 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 queue = []
-loop = False
+loop_mode = False
+current = None  # 🔥 aktualna piosenka
 
 ydl_opts = {
     'format': 'bestaudio/best',
@@ -37,7 +38,7 @@ ffmpeg_options = {
 async def on_ready():
     print(f"Zalogowano jako {bot.user}")
 
-# 🔎 szukanie yt
+# 🔎 YouTube
 def search_youtube(query):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=False)
@@ -46,29 +47,31 @@ def search_youtube(query):
         else:
             return info['url'], info['title']
 
-# ▶️ odtwarzanie kolejnego
+# ▶️ następna piosenka
 async def play_next(ctx):
-    global loop
+    global loop_mode, current
 
-    if loop and ctx.voice_client and ctx.voice_client.source:
-        ctx.voice_client.play(
-            ctx.voice_client.source,
-            after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop)
-        )
-        return
-
-    if len(queue) > 0:
-        url, title = queue.pop(0)
-
-        source = await discord.FFmpegOpusAudio.from_probe(url, **ffmpeg_options)
-        ctx.voice_client.play(
-            source,
-            after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop)
-        )
-
-        await ctx.send(f"▶️ Teraz gra: **{title}**")
+    if loop_mode and current:
+        url, title = current
     else:
-        await ctx.send("⏹️ Kolejka pusta")
+        if len(queue) == 0:
+            await ctx.send("⏹️ Kolejka pusta")
+            return
+        current = queue.pop(0)
+        url, title = current
+
+    source = await discord.FFmpegOpusAudio.from_probe(url, **ffmpeg_options)
+
+    def after_playing(error):
+        fut = asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop)
+        try:
+            fut.result()
+        except:
+            pass
+
+    ctx.voice_client.play(source, after=after_playing)
+
+    await ctx.send(f"▶️ Teraz gra: **{title}**")
 
 # ▶️ play
 @bot.command()
@@ -90,11 +93,14 @@ async def p(ctx, *, query):
     if not ctx.voice_client.is_playing():
         await play_next(ctx)
     else:
-        await ctx.send(f"➕ Dodano do kolejki: **{title}**")
+        await ctx.send(f"➕ Dodano: **{title}**")
 
 # ⏭️ skip
 @bot.command()
 async def skip(ctx):
+    global loop_mode
+    loop_mode = False  # 🔥 wyłącz loop przy skipie
+
     if ctx.voice_client:
         ctx.voice_client.stop()
         await ctx.send("⏭️ Pominięto")
@@ -102,27 +108,21 @@ async def skip(ctx):
 # 🔁 loop
 @bot.command()
 async def loop(ctx):
-    global loop
-    loop = not loop
-    await ctx.send(f"🔁 Loop: {'ON' if loop else 'OFF'}")
+    global loop_mode
+    loop_mode = not loop_mode
+    await ctx.send(f"🔁 Loop: {'ON' if loop_mode else 'OFF'}")
 
 # 🚪 leave
 @bot.command()
 async def leave(ctx):
-    global queue, loop
+    global queue, loop_mode, current
 
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
         queue.clear()
-        loop = False
-        await ctx.send("👋 Wyszedłem z kanału")
+        loop_mode = False
+        current = None
+        await ctx.send("👋 Wyszedłem")
 
-# 🔄 AUTO RESTART (24/7)
-async def keep_alive():
-    while True:
-        await asyncio.sleep(300)
-        print("Bot działa...")
-
-bot.loop.create_task(keep_alive())
-
+# 🚀 START
 bot.run(os.getenv("TOKEN"))
