@@ -103,9 +103,9 @@ def clean_query(query):
     return query
 
 
-def get_ydl_options():
+def get_ydl_options(format_selector="bestaudio[acodec!=none]/best[acodec!=none]/best"):
     options = {
-        "format": "bestaudio/best",
+        "format": format_selector,
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
@@ -152,8 +152,16 @@ def _extract_audio(query):
     query = clean_query(query)
 
     try:
-        with yt_dlp.YoutubeDL(get_ydl_options()) as ydl:
-            info = ydl.extract_info(query, download=False)
+        try:
+            with yt_dlp.YoutubeDL(get_ydl_options()) as ydl:
+                info = ydl.extract_info(query, download=False)
+        except yt_dlp.utils.DownloadError as exc:
+            if "Requested format is not available" not in str(exc):
+                raise
+
+            logger.info("Wybrany format niedostępny, próbuję zapasowego formatu best")
+            with yt_dlp.YoutubeDL(get_ydl_options("best")) as ydl:
+                info = ydl.extract_info(query, download=False)
     except yt_dlp.utils.DownloadError as exc:
         message = str(exc)
         if "429" in message or "Sign in to confirm" in message or "not a bot" in message:
