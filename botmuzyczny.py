@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -169,7 +170,15 @@ def candidate_url(entry):
         return None
 
     if url.startswith("http"):
+        parsed = urlparse(url)
+        if parsed.netloc in {"www.youtube.com", "youtube.com", "m.youtube.com"}:
+            if parsed.path != "/watch":
+                return None
+
         return url
+
+    if not re.fullmatch(r"[\w-]{11}", url):
+        return None
 
     return f"https://www.youtube.com/watch?v={url}"
 
