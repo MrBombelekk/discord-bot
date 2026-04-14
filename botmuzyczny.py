@@ -17,6 +17,11 @@ ydl_opts = {
     'noplaylist': True,
     'quiet': True,
     'default_search': 'ytsearch',
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['web']
+        }
+    }
 }
 
 ffmpeg_options = {
